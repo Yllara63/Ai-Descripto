@@ -3,44 +3,55 @@
 <head>
   <meta charset="UTF-8">
   <title>DescriptoAI</title>
-  <script src="https://js.stripe.com/v3/"></script>
 </head>
 <body>
   <h1>DescriptoAI</h1>
-  <form id="descForm">
-    <input type="text" id="name" placeholder="Product Name" required><br>
-    <input type="text" id="category" placeholder="Category" required><br>
-    <textarea id="features" placeholder="Key Features (comma-separated)" required></textarea><br>
-    <button type="submit">Generate</button>
-  </form>
 
-  <pre id="output"></pre>
+  {% if not email %}
+    <!-- Login Form -->
+    <form method="POST" action="/login">
+      <input type="email" name="email" placeholder="Enter your email" required>
+      <button type="submit">Login</button>
+    </form>
+  {% else %}
+    <!-- Logged In UI -->
+    <p>Welcome, {{ email }}!</p>
+    <p>Credits Remaining: {{ credits }}</p>
+    <form action="/logout">
+      <button type="submit">Logout</button>
+    </form>
 
-  <button id="buyBtn">Buy More Credits ($5)</button>
+    <!-- Generator Form -->
+    <form id="descForm">
+      <input type="text" id="name" placeholder="Product Name" required><br>
+      <input type="text" id="category" placeholder="Category" required><br>
+      <textarea id="features" placeholder="Key Features (comma-separated)" required></textarea><br>
+      <button type="submit">Generate</button>
+    </form>
 
-  <script>
-    document.getElementById('descForm').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const name = document.getElementById('name').value;
-      const category = document.getElementById('category').value;
-      const features = document.getElementById('features').value;
+    <pre id="output"></pre>
 
-      const res = await fetch('/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, category, features })
+    <script>
+      document.getElementById('descForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const name = document.getElementById('name').value;
+        const category = document.getElementById('category').value;
+        const features = document.getElementById('features').value;
+
+        const res = await fetch('/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, category, features })
+        });
+
+        if (res.status === 403) {
+          document.getElementById('output').innerText = "⚠️ Out of credits. Please purchase more.";
+        } else {
+          const data = await res.json();
+          document.getElementById('output').innerText = data.result;
+        }
       });
-
-      const data = await res.json();
-      document.getElementById('output').innerText = data.description;
-    });
-
-    document.getElementById('buyBtn').addEventListener('click', async () => {
-      const res = await fetch('/checkout', { method: 'POST' });
-      const data = await res.json();
-      const stripe = Stripe('{{ stripe_key }}');
-      stripe.redirectToCheckout({ sessionId: data.id });
-    });
-  </script>
+    </script>
+  {% endif %}
 </body>
 </html>
