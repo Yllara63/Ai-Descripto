@@ -1,61 +1,87 @@
-from flask import Flask, render_template, request, jsonify
-import openai, stripe, os
+import os
+import sqlite3
+from flask import Flask, render_template, request, redirect, session, jsonify
+from flask_session import Session
 from dotenv import load_dotenv
 
 load_dotenv()
 
 app = Flask(__name__)
-openai.api_key = os.getenv("OPENAI_API_KEY")
-stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+app.secret_key = os.urandom(24)
+app.config['SESSION_TYPE'] = 'filesystem'
+Session(app)
 
-@app.route('/')
+DB_NAME = "users.db"
+
+# ---------- DATABASE SETUP ----------
+def init_db():
+    with sqlite3.connect(DB_NAME) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT UNIQUE,
+                credits INTEGER DEFAULT 5
+            )
+        """)
+
+init_db()
+
+# ---------- LOGIN ----------
+@app.route("/login", methods=["POST"])
+def login():
+    email = request.form.get("email")
+    if not email:
+        return redirect("/")
+
+    session["email"] = email
+    with sqlite3.connect(DB_NAME) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM users WHERE email = ?", (email,))
+        user = cur.fetchone()
+        if not user:
+            cur.execute("INSERT INTO users (email, credits) VALUES (?, ?)", (email, 5))
+            conn.commit()
+
+    return redirect("/")
+
+# ---------- LOGOUT ----------
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect("/")
+
+# ---------- HOME ----------
+@app.route("/")
 def index():
-    return render_template('index.html', stripe_key=os.getenv("STRIPE_PUBLIC_KEY"))
+    email = session.get("email")
+    credits = None
+    if email:
+        with sqlite3.connect(DB_NAME) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT credits FROM users WHERE email = ?", (email,))
+            row = cur.fetchone()
+            if row:
+                credits = row[0]
+    return render_template("index.html", email=email, credits=credits)
 
-@app.route('/generate', methods=['POST'])
+# ---------- GENERATE ----------
+@app.route("/generate", methods=["POST"])
 def generate():
-    data = request.get_json()
-    name = data['name']
-    category = data['category']
-    features = data['features']
+    email = session.get("email")
+    if not email:
+        return redirect("/")
 
-    prompt = f"""
-    You are a professional e-commerce copywriter. Write a compelling, SEO-optimized product description for:
+    with sqlite3.connect(DB_NAME) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT credits FROM users WHERE email = ?", (email,))
+        row = cur.fetchone()
+        if not row or row[0] <= 0:
+            return "Out of credits", 403
 
-    Product Name: {name}
-    Category: {category}
-    Key Features: {features}
+        cur.execute("UPDATE users SET credits = credits - 1 WHERE email = ?", (email,))
+        conn.commit()
 
-    Tone: Friendly, benefit-driven, and conversion-focused. Limit to 150 words.
-    """
+    return jsonify({"result": "Generated result here..."})
 
-    response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=[{"role": "user", "content": prompt}]
-    )
-
-    description = response['choices'][0]['message']['content']
-    return jsonify({'description': description.strip()})
-
-@app.route('/checkout', methods=['POST'])
-def checkout():
-    session = stripe.checkout.Session.create(
-        payment_method_types=['card'],
-        line_items=[{
-            'price_data': {
-                'currency': 'usd',
-                'product_data': {
-                    'name': 'AI Description Credits',
-                },
-                'unit_amount': 500,
-            },
-            'quantity': 1,
-        }],
-        mode='payment',
-        success_url='http://localhost:5000',
-        cancel_url='http://localhost:5000',
-    )
-    return jsonify({'id': session.id})
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     app.run(debug=True)
